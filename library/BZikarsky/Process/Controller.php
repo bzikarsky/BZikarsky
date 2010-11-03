@@ -81,6 +81,10 @@ final class Controller
 		if ($this->pid  != posix_getpid()) {
 			return;
 		}
+		
+		while (count($this->processes)) {
+            $this->wait();
+		}
     }
         
     /**
