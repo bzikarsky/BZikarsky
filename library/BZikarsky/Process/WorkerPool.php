@@ -43,7 +43,7 @@ class WorkerPool
         
         // check worker
         if (!is_callable($worker)) {
-        	throw new \InvalidArgumentException("Worker must be callable");
+        	throw new \InvalidArgumentException("\$worker must be callable");
         } else {
         	$this->worker = $worker;
         }
