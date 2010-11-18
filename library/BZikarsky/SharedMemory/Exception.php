@@ -1,6 +1,6 @@
 <?php
 
-namespace BZikarsky\Process;
+namespace BZikarsky\SharedMemory;
 
 /**
  * Base exception
@@ -10,10 +10,4 @@ namespace BZikarsky\Process;
  * @license   <http://opensource.org/licenses/bsd-license.php> New BSD
  */
 class Exception extends \Exception
-{
-    public function __construct($message)
-    {
-        // always prepend the process id, when a Process Exception is thrown
-        parent::__construct(sprintf("[pid:%d] %s", posix_getpid(), $message));
-    }
-}
+{}
