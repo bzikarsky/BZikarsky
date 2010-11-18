@@ -30,14 +30,6 @@ final class Controller
     protected $processes = array();
     
     /**
-     * Flag is true, when wait has been called and signal-handling has
-     * to be stopped
-     * 
-     * @var boolean
-     */
-    protected $waiting = false;
-    
-    /**
      * The controllers semaphore for locking $processes
      *
      * @var resource
@@ -59,14 +51,9 @@ final class Controller
     private function __construct() 
     {
     	// setup signal handler
-        if (!pcntl_signal(\SIGCHLD, array($this, 'childExited'), false)) {
+        if (!pcntl_signal(\SIGCHLD, array($this, 'childExited'), true)) {
             throw new Exception("pcntl_signal() failed");
         }
-        
-        // setup sempahore
-        if (!($this->semaphore = sem_get(ftok(__FILE__, 'r'), 1, 0600, 1))) {
-			throw new Exception("sem_get failed()");
-		}
 		
 		// save parent PID
 		$this->pid = posix_getpid();
@@ -77,14 +64,12 @@ final class Controller
      */
     public function __destruct()
     {
-		// only wait in parent-process
-		if ($this->pid  != posix_getpid()) {
-			return;
-		}
-		
-		while (count($this->processes)) {
-            $this->wait();
-		}
+        if (posix_getpid() == $this->pid) {
+            while (count($this->processes)) {
+                $this->wait();
+            }
+        }
+
     }
         
     /**
@@ -111,11 +96,6 @@ final class Controller
      */
     public function childExited()
     {
-		// if the controller is in wait-mode, we ignore SIGCHLD signals
-        if ($this->waiting) {
-            return;
-        }
-        
         /**
          * SIGCHLD signals are handled in wait()
          */
@@ -131,14 +111,12 @@ final class Controller
     protected function processExited($pid, $status)
     {
         // ignore unknown or "invalid" (pid == 0) processes
-        if ($pid == 0 || !array_key_exists($pid, $this->processes)) {
+        if ($pid == 0 || !isset($this->processes[$pid])) {
             return;
         }
         
-        sem_acquire($this->getSemaphore());			// lock
-        $this->processes[$pid]->exited($status);	// tell the proxy-object of its end
-        unset($this->processes[$pid]);				// remove from running processes
-        sem_release($this->getSemaphore());			// unlock
+        $this->processes[$pid]->exited($status);
+        unset($this->processes[$pid]);
     }
     
     /**
@@ -164,26 +142,39 @@ final class Controller
 	 */
     public function wait($pid=0)
     {
-    	// block signal handler
-        $this->waiting = true;
-
+        // if there is nor process, no need to wait
+        if (!count($this->processes)) {
+            return;
+        }
+        
         $status = null;
-        if (-1 == ($pid = pcntl_waitpid($pid, $status))) {
-            throw new Exception("pcntl_waitpid() failed");
+        if (-1 == ($pid = pcntl_waitpid($pid, $status, WUNTRACED))) {
+            // PHP 5.3.3 does not provide `perror` from waitpid in userland code
+            // waitpid can either fail with ECHILD, meaning that there are no child 
+            // processes, which can be ignored, since it's caught by our check.
+            // Or it fails with EINTR, when a signal comes in, which is ok as well, 
+            // we just drop out and handle the signal
+            return;
         }
         
         // tell process of its end and unlock signal hadler
         $this->processExited($pid, $status);
-        $this->waiting = false;
     }
     
     /**
-     * Returns the semaphore
-     *
-     * @return resource*
+     * Renews the controller in a forked process
+     * 
+     * Since a forked process can fork itself new processes
+     * a clean, new instance of the controller is required in 
+     * every process.
      */
-    public function getSemaphore()
+    public static function forked()
     {
-    	return $this->semaphore;
+        if (posix_getpid() == self::getInstance()->pid) {
+            throw new Exception("Controller is not forked");
+        }
+        
+        self::$instance = new self();
     }
+    
 }

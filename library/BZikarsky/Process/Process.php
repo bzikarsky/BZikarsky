@@ -28,7 +28,7 @@ class Process extends ProcessAbstract
 		if (!is_callable($callable)) {
 			throw new \InvalidArgumentException("Expected callable");
 		}
-		
+
 		$this->callable = $callable;
 	}
 	

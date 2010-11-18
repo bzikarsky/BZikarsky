@@ -116,6 +116,7 @@ interface ProcessInterface
      * @returns \BZikarsky\Process\ProcessInterface
      */
 	public function addEventListener($event, $callable);
+	
 }
 
 

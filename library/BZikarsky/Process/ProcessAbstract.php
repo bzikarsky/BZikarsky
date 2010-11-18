@@ -2,6 +2,8 @@
 
 namespace BZikarsky\Process;
 
+use BZikarsky\SharedMemory\Semaphore;
+
 /**
  * ProcessAbstract provides methods for the creation and management of child 
  * processes
@@ -45,20 +47,32 @@ abstract class ProcessAbstract implements ProcessInterface
     protected $listeners = array();
     
     /**
+     * Process' semaphore
+     * 
+     * @var \BZikarsky\Process\Semaphore
+     */
+    protected $semaphore = null;
+    
+    /**
      * Runs the process
      *
      * The process is forked, and registered with the controller. 
-     * For stability the controller's semaphore is used.
      * The method calls execute as soon it is forked
+     * To avoid race-conditions all processes use a semaphore to 
+     * make sure parent is set up before the child can exit
+     * If additional setup work has to be done by the caller before
+     * before the execution starts (and possibly ends), 
+     * $unlockSemaphore can be used to keep the locks
+     *
      *
      * @return \BZikarsky\Process\ProcessInterface
      */
-    public function run()
+    public function run($unlockSempahore=true)
     {
-    	$controller = Controller::getInstance();
-    	sem_acquire($controller->getSemaphore());
-    	
-        // fork
+        $controller  = Controller::getInstance();
+        
+        // lock & fork
+        $this->getSemaphore()->acquire();
         $pid = pcntl_fork();
         
         // it's an error
@@ -70,6 +84,14 @@ abstract class ProcessAbstract implements ProcessInterface
         if ($pid == 0) {
             $this->pid    = posix_getpid();
             $this->status = self::STATUS_RUNNING;
+            
+            // tell the controller we forked
+            Controller::forked();
+            
+            // wait for the parent process to finish its startup 
+            // procedure
+            $this->getSemaphore()->touch();
+            
             exit($this->execute());
         }
         
@@ -79,9 +101,18 @@ abstract class ProcessAbstract implements ProcessInterface
         
         // register with controller
         $controller->register($this);
-        sem_release($controller->getSemaphore());
-        $this->fire(self::EVENT_START);
         
+        // if the calling process has to do
+        // startup work itself, it can request
+        // that the lock stays closed
+        // The calling process then has to release
+        // the sempahore itself
+        if ($unlockSempahore) {
+            $this->getSemaphore()->release();
+        }
+        
+        $this->fire(self::EVENT_START);
+
         return $this;
     }
     
@@ -146,6 +177,7 @@ abstract class ProcessAbstract implements ProcessInterface
             $this->status = self::STATUS_FINISHED;
         }
         
+        $this->getSemaphore()->remove();
         $this->fire(self::EVENT_EXIT);
     }
     
@@ -216,10 +248,22 @@ abstract class ProcessAbstract implements ProcessInterface
         }
     }
     
+    public function getSemaphore()
+    {
+        if (!$this->semaphore) {
+            $this->semaphore = new Semaphore(
+                spl_object_hash($this), 1, 0666, 0
+            );
+        }
+        
+        return $this->semaphore;
+    }
+    
     /**
      * Executes the process' logic
      *
      * @return int $exitCode
      */
     abstract protected function execute();
+   
 }
